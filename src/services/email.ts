@@ -1,6 +1,6 @@
 import {File as FormidableFile, Files as FormidableFiles} from "formidable";
 import nodemailer, {Transporter} from "nodemailer";
-import {Attachment as NodemailerAttachment} from "nodemailer/lib/mailer";
+import {Attachment as NodemailerAttachment} from "nodemailer";
 import {TargetManager} from "./targetManager";
 import {Target} from "../@types/target";
 
@@ -27,7 +27,9 @@ export class EmailService {
 
         for (const fileKey in files) {
             const fileValue = files[fileKey];
-            const fileValues: FormidableFile[] = fileValue instanceof Array ? fileValue : [fileValue]
+            const fileValues: FormidableFile[] = Array.isArray(fileValue) 
+                ? (fileValue.filter(Boolean) as FormidableFile[]) 
+                : (fileValue ? [fileValue] : []);
 
             for (const singleFileValue of fileValues) {
                 attachments.push(this.mapFormidableFileToNodemailerAttachment(singleFileValue));
@@ -44,8 +46,8 @@ export class EmailService {
     private static mapFormidableFileToNodemailerAttachment(file: FormidableFile): NodemailerAttachment {
         return {
             path: file.filepath,
-            filename: file.originalFilename,
-            contentType: file.mimetype,
+            filename: file.originalFilename || undefined,
+            contentType: file.mimetype || undefined,
         };
     }
 
@@ -56,7 +58,7 @@ export class EmailService {
      * @param lastName
      * @return string The formatted "from" field
      */
-    public static formatFromField(from: string, firstName: string = null, lastName: string = null): string {
+    public static formatFromField(from: string, firstName: string | undefined = undefined, lastName: string | undefined = undefined): string {
 
         let result = "";
 
@@ -85,11 +87,15 @@ export class EmailService {
      */
     public static async sendMail(targetName: string, from: string, subject: string, body: string, files: FormidableFiles): Promise<boolean|Error> {
 
-        if(!this.targetTransports.has(targetName)) return false;
+        let target = TargetManager.targets.get(targetName);
+        if(!target) {
+            return false;
+        }
 
-        let target: Target = TargetManager.targets.get(targetName);
-
-        let transporter: Transporter = this.targetTransports.get(targetName);
+        let transporter = this.targetTransports.get(targetName);
+        if(!transporter) {
+            return false;
+        }
 
         try {
             await transporter.sendMail({
@@ -103,8 +109,9 @@ export class EmailService {
         } catch (e) {
             console.error("[!] An error occurred while sending an email");
             console.error("* target: " + targetName);
-            console.error("* " + e.message);
-            return e;
+            const error = e as Error;
+            console.error("* " + error.message);
+            return error;
         }
 
         console.log(`Email successful sent`);

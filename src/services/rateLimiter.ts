@@ -24,11 +24,10 @@ export class RateLimiter {
      * @param target (file-)name of a target
      * @param identifier Rate limiter identifier (ip address)
      */
-    public static async consume(target, identifier): Promise<boolean> {
+    public static async consume(target: string, identifier: string): Promise<boolean> {
 
-        let rateLimiter: RateLimiterMemory = this.limiters.get(target);
-
-        if(!rateLimiter) return false;
+        let rateLimiter = this.limiters.get(target);
+        if (!rateLimiter) return false;
 
         try {
             await rateLimiter.consume(identifier, 1);

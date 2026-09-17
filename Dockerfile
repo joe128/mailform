@@ -1,34 +1,33 @@
-# Build stage
+# Base Stage
 FROM node:lts-alpine AS builder
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 
-RUN mkdir /app
+# Build Stage
+FROM base AS builder
 WORKDIR /app
 
-# copy configs folder
-COPY package*.json ./
-COPY tsconfig.json ./
-# copy source code to /app/src folder
+# copy configs and src
+COPY package.json pnpm-lock.yaml tsconfig.json ./
 COPY src src
 
-# install dependencies (https://docs.npmjs.com/cli/v7/commands/npm-ci)
-RUN npm ci
+# install dependencies
+RUN pnpm install --frozen-lockfile
 
 # build
-RUN npm run build
+RUN pnpm run build
+RUN pnpm prune --prod
 
 # Production stage
-FROM node:lts-alpine
+FROM base AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 
-RUN mkdir /app
-WORKDIR /app
-
-COPY package*.json ./
-COPY --from=builder /app/dist dist
+COPY package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
 
 RUN mkdir targets
 
-# install production dependencies
-RUN npm ci
-
-CMD ["npm", "start"]
+CMD ["pnpm", "start"]

@@ -1,8 +1,6 @@
 import {NextFunction, Request, Response, Router} from "express";
 import formidable from "formidable";
-import { firstValues } from 'formidable/src/helpers/firstValues.js';
 import {TargetManager} from "./services/targetManager";
-import {Target} from "./@types/target";
 import {RateLimiter} from "./services/rateLimiter";
 import validate from "./services/validate";
 import {postBody} from "./models/post";
@@ -17,12 +15,10 @@ const router: Router = Router();
  */
 router.use("/:target", async (req: Request, res: Response, next: NextFunction) => {
 
-    // Check if target exist
-    if(!TargetManager.targets.has(req.params.target)) {
+    let target = TargetManager.targets.get(req.params.target as string);
+    if(!target) {
         return res.sendStatus(404);
     }
-
-    let target: Target = TargetManager.targets.get(req.params.target);
 
     // CORS
     res.setHeader("Access-Control-Allow-Origin", target.origin ? target.origin : "*");
@@ -41,6 +37,9 @@ router.use("/:target", async (req: Request, res: Response, next: NextFunction) =
 
     // Authentication
     if(target.key) {
+        if (!req.headers.authorization) {
+            return res.status(401).end();
+        }
         let bearer = /Bearer (.+)/.exec(req.headers.authorization);
 
         if(!bearer || bearer[1] !== target.key) {
@@ -56,17 +55,26 @@ router.use("/:target", async (req: Request, res: Response, next: NextFunction) =
 router.post("/:target", async (req: Request, res: Response) => {
 
     // Check rate limit
-    if(!await RateLimiter.consume(req.params.target, req.ip)) {
+    const targetParam = req.params.target as string;
+    if(!await RateLimiter.consume(targetParam, req.ip ?? "127.0.0.1")) {
         return res.status(429).end();
     }
 
-    let target: Target = TargetManager.targets.get(req.params.target);
+    let target = TargetManager.targets.get(targetParam);
+    if(!target) {
+        return res.sendStatus(404);
+    }
 
     // parse form
     const form = formidable({});
     try {
         const [fieldsMultiple, files] = await form.parse(req);
-        const fields = firstValues(form, fieldsMultiple, []);
+        const fields = Object.fromEntries(
+            Object.entries(fieldsMultiple).map(([key, value]) => [
+                key,
+                Array.isArray(value) ? value[0] : value
+            ])
+        );
         const validationResult = validate(fields, postBody);
 
         // validate fields
@@ -76,8 +84,13 @@ router.post("/:target", async (req: Request, res: Response) => {
 
         // Check captcha
         if(target.captcha) {
-            let userCaptchaResponse = fields["g-recaptcha-response"] || fields["h-captcha-response"] || null;
-            userCaptchaResponse = userCaptchaResponse instanceof Array ? userCaptchaResponse[0] : userCaptchaResponse
+            const captchaField = fields["g-recaptcha-response"] || fields["h-captcha-response"];
+            const userCaptchaResponse = Array.isArray(captchaField) ? captchaField[0] : captchaField;
+            
+            if (!userCaptchaResponse) {
+                if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));
+                return res.status(400).send({ message: "captcha response missing" }).end();
+            }
             let verified = await CaptchaService.verifyCaptcha(target.captcha, userCaptchaResponse);
 
             if(!verified) {
@@ -87,16 +100,18 @@ router.post("/:target", async (req: Request, res: Response) => {
         }
 
         // extract fields
-        const fieldFrom = fields["from"] instanceof Array ? fields["from"][0] : fields["from"]
-        const fieldFirstName = fields["firstName"] instanceof Array ? fields["firstName"][0] : fields["firstName"]
-        const fieldLastName = fields["lastName"] instanceof Array ? fields["lastName"][0] : fields["lastName"]
-        const fieldSubjectPrefix = fields["subjectPrefix"] instanceof Array ? fields["subjectPrefix"][0] : fields["subjectPrefix"] ?? ""
-        const subject = (target.subjectPrefix ?? "") + fieldSubjectPrefix + (fields["subject"] instanceof Array ? fields["subject"][0] : fields["subject"])
-        const fieldBody = fields["body"] instanceof Array ? fields["body"][0] : fields["body"]
+        const fieldFrom = Array.isArray(fields["from"]) ? fields["from"][0] : fields["from"];
+        const fieldFirstName = Array.isArray(fields["firstName"]) ? fields["firstName"][0] : fields["firstName"];
+        const fieldLastName = Array.isArray(fields["lastName"]) ? fields["lastName"][0] : fields["lastName"];
+        const fieldSubjectPrefix = Array.isArray(fields["subjectPrefix"]) ? fields["subjectPrefix"][0] : fields["subjectPrefix"] ?? "";
+        const subject = (target.subjectPrefix ?? "") + fieldSubjectPrefix + (Array.isArray(fields["subject"]) ? fields["subject"][0] : fields["subject"]);
+        const fieldBody = Array.isArray(fields["body"]) ? fields["body"][0] : fields["body"];
+
 
         // send email
         let from = EmailService.formatFromField(fieldFrom ?? target.from, fieldFirstName, fieldLastName);
-        let sent = await EmailService.sendMail(req.params.target, from, subject, fieldBody, files);
+        const targetParam = req.params.target as string;
+        let sent = await EmailService.sendMail(targetParam, from, subject, fieldBody, files);
 
         if(sent instanceof Error || !sent) {
             if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));

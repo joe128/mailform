@@ -16,7 +16,7 @@ export class CaptchaService {
                 url = "https://hcaptcha.com/siteverify"
                 break;
             default:
-                break;
+                throw new Error(`Captcha-Provider '${captcha.provider}' is not supported!`);
         }
 
         try {
