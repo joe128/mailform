@@ -62,10 +62,11 @@ jobs:
 
   docker:
     if: |
-      (github.event_name == 'push' && needs.release.outputs.new_release_published == 'true') ||
-      (github.event_name == 'workflow_dispatch')
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && needs.release.outputs.new_release_published == 'true')
+      )
     needs: release
-    if: always() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read
