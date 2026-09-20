@@ -1,6 +1,6 @@
 export interface Target {
     smtp: string;
-    origin: string;
+    origin: string | string[];
     recipients: string[];
     from?: string;
     subjectPrefix?: string;
