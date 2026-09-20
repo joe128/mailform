@@ -1,4 +1,5 @@
 import {NextFunction, Request, Response, Router} from "express";
+import cors from 'cors';
 import formidable from "formidable";
 import {TargetManager} from "./services/targetManager";
 import {RateLimiter} from "./services/rateLimiter";
@@ -10,40 +11,85 @@ import getRedirectUrl from "./util/redirect";
 
 const router: Router = Router();
 
-/**
- * Check if target exist, validate origin and send CORS headers.
- */
-router.use("/:target", async (req: Request, res: Response, next: NextFunction) => {
-
-    let target = TargetManager.targets.get(req.params.target as string);
-    if(!target) {
+const dynamicCors = (req: Request, res: Response, next: NextFunction) => {
+    const target = TargetManager.targets.get(req.params.target as string);
+    
+    if (!target) {
         return res.sendStatus(404);
     }
 
-    // CORS
-    res.setHeader("Access-Control-Allow-Origin", target.origin ? target.origin : "*");
-    res.setHeader("Access-Control-Allow-Method", "POST");
-    res.setHeader("Access-Control-Allow-Headers", "*");
+    const corsOptions: cors.CorsOptions = {
+        methods: ["POST", "OPTIONS"],
+        allowedHeaders: "*",
+        origin: (requestOrigin, callback) => {
+            const NO_INTERNAL_ERROR = null;
+            const ALLOW_ACCESS = true;
+            // cors-package only skips setting of CORS headers and call next middleware
+            const DENY_ACCESS = false;
 
-    if(req.method === "OPTIONS") {
-        return res.status(200).end();
-    }
+            if (!target.origin || target.origin === "*") {
+                return callback(NO_INTERNAL_ERROR, ALLOW_ACCESS);
+            }
 
-    // Check origin
-    if(target.origin && target.origin !== req.header("origin")) {
-        if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));
+            if (!requestOrigin) {
+                return callback(NO_INTERNAL_ERROR, DENY_ACCESS);
+            }
+
+            const allowedOrigins = Array.isArray(target.origin) ? target.origin : [target.origin];
+
+            const isAllowed = allowedOrigins.some(allowed => {
+                if (allowed === requestOrigin) return true;
+                
+                if (allowed.startsWith("*.")) {
+                    const baseDomain = allowed.slice(2).replace(/\./g, "\\.");
+                    // matches: http(s):// + optional subdomains + your base domain + optional port
+                    const regex = new RegExp(`^https?:\\/\\/([a-z0-9-]+\\.)*${baseDomain}(:[0-9]+)?$`, "i");
+                    return regex.test(requestOrigin);
+                }
+                return false;
+            });
+
+            if (isAllowed) {
+                callback(NO_INTERNAL_ERROR, ALLOW_ACCESS);
+            } else {
+                callback(NO_INTERNAL_ERROR, DENY_ACCESS);
+            }
+        }
+    };
+
+    cors(corsOptions)(req, res, next);
+};
+
+/**
+ * Check if target exist, validate origin and send CORS headers.
+ */
+router.use("/:target", dynamicCors, async (req: Request, res: Response, next: NextFunction) => {
+    const target = TargetManager.targets.get(req.params.target as string)!;
+    // cors-package sets the CORS headers only if the origin is allowed. If not, it calls next() without setting headers.
+    // so we have to break the request here with 403 if the origin is not allowed.
+    const requestOrigin = req.header("origin");
+    const hasCorsHeader = res.getHeader("Access-Control-Allow-Origin");
+    
+    if (requestOrigin && !hasCorsHeader) {
+        console.warn(`[CORS Blocked] Target: "${req.params.target}", Incoming Origin: "${requestOrigin}", Allowed: ${JSON.stringify(target.origin)}`);
+
+        if (target.redirect?.error) {
+            return res.redirect(getRedirectUrl(req, target.redirect.error));
+        }
         return res.status(403).end();
     }
 
     // Authentication
-    if(target.key) {
+    if (target.key) {
         if (!req.headers.authorization) {
             return res.status(401).end();
         }
         let bearer = /Bearer (.+)/.exec(req.headers.authorization);
 
-        if(!bearer || bearer[1] !== target.key) {
-            if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));
+        if (!bearer || bearer[1] !== target.key) {
+            if (target.redirect?.error) {
+               return res.redirect(getRedirectUrl(req, target.redirect.error));
+            }
             return res.status(401).end();
         }
     }
@@ -110,7 +156,6 @@ router.post("/:target", async (req: Request, res: Response) => {
 
         // send email
         let from = EmailService.formatFromField(fieldFrom ?? target.from, fieldFirstName, fieldLastName);
-        const targetParam = req.params.target as string;
         let sent = await EmailService.sendMail(targetParam, from, subject, fieldBody, files);
 
         if(sent instanceof Error || !sent) {

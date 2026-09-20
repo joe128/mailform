@@ -65,7 +65,10 @@ They are JSON files placed in the `/targets` directory.
 ```json
 {
     "smtp": "smtps://username:password@smtp.example.com",
-    "origin": "my-website.com",
+    "origin": [
+      "https://my-website.com",
+      "*.my-website.com"
+    ],
     "recipients": ["example@example.com"],
     "rateLimit": {
         "timespan": 300,
@@ -80,7 +83,8 @@ They are JSON files placed in the `/targets` directory.
 
 **Available fields:**
 - `smtp` *required* | A valid SMTP(S) url.
-- `origin` *optional* | A HTTP origin that is used for CORS and to restrict access. Default is * if not set.
+- `origin` *optional* | A HTTP origin (or array of origins) used for CORS and to restrict access. Supports exact domains, global wildcards, and subdomain wildcards. Default is `*` if not set.
+  * *Examples:* `"https://meine.domain"`, `"*.meine.domain"`, or `["https://app.com", "*.meine.domain"]`
 - `recipients` *required* | An array of email addresses which should receive the email.
 - `from` *optional* | The "from" field of an email. This is used as fallback if no "from" is provided in the request.
 - `subjectPrefix` *optional* | A target-wide prefix for the email subject.
@@ -101,9 +105,9 @@ For the exact validations of the fields please see here: [target.ts](/src/models
 ### Fields
 Whether as formular data or json, the fields are the same.
 
-- `from` *optional* | The email address of the sender. If this filed is not set, the "from" field of your target will be used.
-- `firstName` *optional* | A classic first name filed which will be attached to the "from" field of the email.
-- `lastName` *optional* | A classic last name filed which will be attached to the "from" field of the email.
+- `from` *optional* | The email address of the sender. If this field is not set, the "from" field of your target will be used.
+- `firstName` *optional* | A classic first name field which will be attached to the "from" field of the email.
+- `lastName` *optional* | A classic last name field which will be attached to the "from" field of the email.
 - `subjectPrefix` *optional* | A Prefix for the email subject.
 - `subject` *required* | The email subject.
 - `body` *required* | The email body (supports HTML).
@@ -158,7 +162,7 @@ Authorization: Bearer your-optional-api-key
 
 {
   "from": "example@example.com",
-  "subject": "your subect",
+  "subject": "your subject",
   "body": "your message",
 }
 ```

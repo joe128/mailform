@@ -8,7 +8,22 @@ export const targetModel = {
         }
     },
     origin: {
-        type: "string",
+        // sring | string[]
+        type: function(value: any) {
+            if (value === null || value === undefined) return null;
+            
+            if (typeof value === "string") return null;
+            
+            if (Array.isArray(value)) {
+                const allStrings = value.every(item => typeof item === "string");
+                if (allStrings) {
+                    return null; 
+                }
+                return "must contain only strings";
+            }
+            
+            return "must be a string or an array of strings";
+        },
         presence: false
     },
     recipients: {

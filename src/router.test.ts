@@ -11,7 +11,7 @@ import { EmailService } from "./services/email";
 
 type TargetFromModel = {
     smtp: string;
-    origin?: string;
+    origin?: string | string[];
     recipients: string[];
     from?: string;
     subjectPrefix?: string;
@@ -130,6 +130,75 @@ describe("Router Integration Tests", () => {
                 .set("Origin", "https://evil-website.com");
 
             expect(response.status).toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+        });
+
+        it("should allow request and match valid subdomain for a subdomain-wildcard (*.mywebsite.com)", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                origin: "*.mywebsite.com"
+            }) as unknown as Target);
+
+            const response = await supertest(app)
+                .post("/my-target")
+                .set("Origin", "https://sub.mywebsite.com");
+
+            expect(response.status).not.toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBe("https://sub.mywebsite.com");
+        });
+
+        it("should return 403 if a subdomain is slightly off from the wildcard configuration", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                origin: "*.mywebsite.com"
+            }) as unknown as Target);
+
+            const response = await supertest(app)
+                .post("/my-target")
+                .set("Origin", "https://evil-mywebsite.com");
+
+            expect(response.status).toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+        });
+
+        it("should allow request if origin matches one of multiple origins in an array", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                origin: ["https://mymainwebsite.de", "*.mywebsite.com"]
+            }) as unknown as Target);
+
+            const response = await supertest(app)
+                .post("/my-target")
+                .set("Origin", "https://dev.mywebsite.com");
+
+            expect(response.status).not.toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBe("https://dev.mywebsite.com");
+        });
+
+        it("should handle OPTIONS preflight requests successfully for valid origins", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                origin: "*.mywebsite.com"
+            }) as unknown as Target);
+
+            const response = await supertest(app)
+                .options("/my-target")
+                .set("Origin", "https://app.mywebsite.com")
+                .set("Access-Control-Request-Method", "POST");
+
+            expect(response.status).toBe(204);
+            expect(response.headers["access-control-allow-origin"]).toBe("https://app.mywebsite.com");
+            expect(response.headers["access-control-allow-methods"]).toContain("POST");
+        });
+
+        it("should return 403 for OPTIONS preflight requests if origin is invalid", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                origin: "https://mywebsite.com"
+            }) as unknown as Target);
+
+            const response = await supertest(app)
+                .options("/my-target")
+                .set("Origin", "https://evil-website.com")
+                .set("Access-Control-Request-Method", "POST");
+
+            expect(response.status).toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBeUndefined();
         });
 
         it("should return 401 if target has a key but no auth header is provided", async () => {
@@ -144,8 +213,8 @@ describe("Router Integration Tests", () => {
 
     describe("POST: /:target Form Processing", () => {
         it("should return 429 if rate limit is exceeded", async () => {
-            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({ 
-                from: "test@test.de" 
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({
+                from: "test@test.de"
             }) as unknown as Target);
             vi.mocked(RateLimiter.consume).mockResolvedValue(false);
 
@@ -175,7 +244,7 @@ describe("Router Integration Tests", () => {
             vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget() as unknown as Target);
             vi.mocked(RateLimiter.consume).mockResolvedValue(true);
 
-            vi.mocked(validate).mockReturnValue({ error: undefined, problems: undefined }); 
+            vi.mocked(validate).mockReturnValue({ error: undefined, problems: undefined });
             mockParse.mockResolvedValue([
                 {
                     from: ["user@example.com"],
@@ -224,7 +293,7 @@ describe("Router Integration Tests", () => {
             from: "default-from@example.com",
             origin: "",
             rateLimit: { timespan: 60, requests: 10 },
-            captcha: { provider: "recaptcha" as const } 
+            captcha: { provider: "recaptcha" as const }
         });
 
         it("should return 400 if captcha is required but missing from fields", async () => {
@@ -250,7 +319,7 @@ describe("Router Integration Tests", () => {
         it("should return 400 if captcha verification fails", async () => {
             vi.mocked(TargetManager.targets.get).mockReturnValue(createCaptchaTarget() as unknown as Target);
             vi.mocked(validate).mockReturnValue({ error: undefined, problems: undefined });
-            
+
             // simulate that the captcha verification fails
             vi.mocked(CaptchaService.verifyCaptcha).mockResolvedValue(false);
 
@@ -268,7 +337,7 @@ describe("Router Integration Tests", () => {
 
             expect(response.status).toBe(400);
             expect(response.body.message).toBe("captcha verification failed");
-            
+
             expect(CaptchaService.verifyCaptcha).toHaveBeenCalledWith(
                 { provider: "recaptcha" },
                 "invalid-token-123"
