@@ -20,9 +20,13 @@ RUN pnpm run build
 RUN pnpm prune --prod
 
 # Production stage
-FROM base AS runner
+FROM node:lts-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm \
+    && rm -f /usr/local/bin/npx
 
 COPY package.json ./
 COPY --from=builder /app/node_modules ./node_modules
@@ -30,4 +34,4 @@ COPY --from=builder /app/dist ./dist
 
 RUN mkdir targets
 
-CMD ["pnpm", "start"]
+CMD ["node", "dist/main.js"]
