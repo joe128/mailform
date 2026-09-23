@@ -15,8 +15,5 @@
       "matchUpdateTypes": ["major"],
       "automerge": false
     }
-  ],
-  "pnpm": {
-    "enabled": true
-  }
+  ]
 }
