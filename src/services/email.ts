@@ -3,6 +3,7 @@ import nodemailer, {Transporter} from "nodemailer";
 import {Attachment as NodemailerAttachment} from "nodemailer";
 import {TargetManager} from "./targetManager";
 import {Target} from "../@types/target";
+import { FileUtil } from "../util/fileUtil";
 
 export class EmailService {
 
@@ -112,6 +113,8 @@ export class EmailService {
             const error = e as Error;
             console.error("* " + error.message);
             return error;
+        } finally {
+            await FileUtil.cleanUpFiles(files as Record<string, FormidableFile[] | undefined>);
         }
 
         console.log(`Email successful sent`);

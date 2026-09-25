@@ -1,5 +1,5 @@
 import {NextFunction, Request, Response, Router} from "express";
-import formidable from "formidable";
+import formidable, { Fields, Files, File } from 'formidable';
 import {TargetManager} from "./services/targetManager";
 import {RateLimiter} from "./services/rateLimiter";
 import validate from "./services/validate";
@@ -7,6 +7,7 @@ import {postBody} from "./models/post";
 import {EmailService} from "./services/email";
 import {CaptchaService} from "./services/captcha";
 import getRedirectUrl from "./util/redirect";
+import { FileUtil, JsonBase64File } from "./util/fileUtil";
 
 const router: Router = Router();
 
@@ -65,10 +66,55 @@ router.post("/:target", async (req: Request, res: Response) => {
         return res.sendStatus(404);
     }
 
-    // parse form
-    const form = formidable({});
+
+    // parse form / json-data
+    let fieldsMultiple: Fields = {};
+    let files: Record<string, File[] | undefined> = {};
     try {
-        const [fieldsMultiple, files] = await form.parse(req);
+        if (req.is('json') || (req.body && Object.keys(req.body).length > 0)) {
+            const bodyFields: Record<string, any> = {};
+            const bodyFiles: Record<string, JsonBase64File> = {};
+
+            // expected Json-Format for files: 
+            // "attachedFile": { "base64": "...", "filename": "test.pdf", "mimetype": "application/pdf" }
+            for (const [key, value] of Object.entries(req.body)) {
+                    if (value && typeof value === 'object' && 'base64' in value) {
+                        bodyFiles[key] = value as JsonBase64File;
+                    } else {
+                        bodyFields[key] = value;
+                    }
+                }
+
+            fieldsMultiple = Object.fromEntries(
+                Object.entries(bodyFields).map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
+            );
+
+            for (const [key, fileData] of Object.entries(bodyFiles)) {
+                try {
+                    const mockedFile = await FileUtil.saveBase64AsFormidableFile(
+                        fileData.base64,
+                        fileData.filename,
+                        fileData.mimetype
+                    );
+                    files[key] = [mockedFile];
+                } catch (err) {
+                    return res.status(400).json({ error: `Failed to process file for key: ${key}` });
+                }
+            }
+
+        } else {
+            const form = formidable({});
+            const [parsedFields, parsedFiles] = await form.parse(req);
+            fieldsMultiple = parsedFields;
+            files = parsedFiles;
+        }
+    } catch (parseError) {
+        console.error("Parsing failed:", parseError);
+        if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));
+        return res.status(500).send("Parse Error"); 
+    }
+
+    try {
         const fields = Object.fromEntries(
             Object.entries(fieldsMultiple).map(([key, value]) => [
                 key,
@@ -123,9 +169,12 @@ router.post("/:target", async (req: Request, res: Response) => {
         }
 
         return res.status(200).end();
-    } catch (err) {
+    } catch (error) {
+        console.error("Error in Controller:", error);
         if(target.redirect?.error) return res.redirect(getRedirectUrl(req, target.redirect.error));
-        return res.status(500).send({ message: "Parse Error" }).end();
+        return res.status(500).send({ message: "Internal Server Error" }).end();
+    } finally {
+        await FileUtil.cleanUpFiles(files as Record<string, File[]>);
     }
 });
 

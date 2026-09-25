@@ -8,6 +8,7 @@ import validate from "./services/validate";
 import { RateLimiter } from "./services/rateLimiter";
 import { CaptchaService } from "./services/captcha";
 import { EmailService } from "./services/email";
+import { FileUtil } from './util/fileUtil';
 
 type TargetFromModel = {
     smtp: string;
@@ -55,6 +56,8 @@ vi.mock("./services/email", () => ({
 vi.mock("./services/validate", () => ({
     default: vi.fn(() => ({ error: null }))
 }));
+
+vi.mock('./util/fileUtil', { spy: true });
 
 const mockParse = vi.fn();
 vi.mock("formidable", () => {
@@ -142,7 +145,7 @@ describe("Router Integration Tests", () => {
         });
     });
 
-    describe("POST: /:target Form Processing", () => {
+    describe("POST: /:target Form / Json Processing", () => {
         it("should return 429 if rate limit is exceeded", async () => {
             vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget({ 
                 from: "test@test.de" 
@@ -171,7 +174,7 @@ describe("Router Integration Tests", () => {
             expect(response.body).toEqual({ error: "Email is invalid", problems: [] });
         });
 
-        it("should parse form data successfully and trigger EmailService", async () => {
+        it("should parse data successfully and trigger EmailService", async () => {
             vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget() as unknown as Target);
             vi.mocked(RateLimiter.consume).mockResolvedValue(true);
 
@@ -214,6 +217,69 @@ describe("Router Integration Tests", () => {
 
             expect(response.status).toBe(500);
             expect(response.text).toContain("Parse Error");
+        });
+
+        it("should successfully process a valid JSON request with fields and base64 files", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget() as unknown as Target);
+            vi.mocked(RateLimiter.consume).mockResolvedValue(true);
+            
+            const mockFileObject = {
+                filepath: '/tmp/mock-file.pdf',
+                originalFilename: 'test.pdf',
+                mimetype: 'application/pdf',
+                size: 1234
+            };
+            vi.spyOn(FileUtil, 'saveBase64AsFormidableFile').mockResolvedValue(mockFileObject as any);
+            vi.spyOn(FileUtil, 'cleanUpFiles').mockResolvedValue();
+
+            const validJsonPayload = {
+                firstName: "John",
+                lastName: "Doe",
+                subject: "Test Subject",
+                body: "Body-Text",
+                myFile: {
+                    filename: "test.pdf",
+                    mimetype: "application/pdf",
+                    base64: "data:application/pdf;base64,JVBERi0xLjQKJ..."
+                }
+            };
+
+            const response = await supertest(app)
+                .post("/my-target")
+                .set("Content-Type", "application/json")
+                .send(validJsonPayload);
+
+            expect(response.status).toBe(200);
+            expect(FileUtil.saveBase64AsFormidableFile).toHaveBeenCalledWith(
+                validJsonPayload.myFile.base64,
+                validJsonPayload.myFile.filename,
+                validJsonPayload.myFile.mimetype
+            );
+            expect(FileUtil.cleanUpFiles).toHaveBeenCalled();
+        });
+
+        it("should return 400 if FileUtil fails to process a base64 file", async () => {
+            vi.mocked(TargetManager.targets.get).mockReturnValue(createTestTarget() as unknown as Target);
+            vi.mocked(RateLimiter.consume).mockResolvedValue(true);
+
+            vi.spyOn(FileUtil, 'saveBase64AsFormidableFile').mockRejectedValue(new Error("Invalid base64 string"));
+
+            const invalidJsonPayload = {
+                firstName: "John",
+                myFile: {
+                    filename: "broken.pdf",
+                    mimetype: "application/pdf",
+                    base64: "invalid-base64-content"
+                }
+            };
+
+            const response = await supertest(app)
+                .post("/my-target")
+                .set("Content-Type", "application/json")
+                .send(invalidJsonPayload);
+
+            expect(response.status).toBe(400);
+            expect(response.body).toEqual({ error: "Failed to process file for key: myFile" });
         });
     });
 
