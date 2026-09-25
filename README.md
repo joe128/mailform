@@ -151,8 +151,6 @@ Simply make a request to `/:target` (replace with your target's file name).
 If you have set an API key, add the HTTP Authorization header with type `Bearer` and then the key.
 Make sure to also use the right origin (if not set automatically because the request is from a backend).
 
-> ⚠ Since the file upload feature got added, there is an Issue with `application/json`. Please use multipart form or form urlencoded for API requests. I am working on a rewrite where this gets fixed.
-
 **Example request:** 
 ```http request
 POST https://mailform.yourserver.com/your-target-file-name
@@ -164,6 +162,11 @@ Authorization: Bearer your-optional-api-key
   "from": "example@example.com",
   "subject": "your subject",
   "body": "your message",
+  "myFile": {
+    "filename": "test.pdf",
+    "mimetype": "application/pdf",
+    "base64": "data:application/pdf;base64,JVBERi0xLjQKJ..."
+  }
 }
 ```
 
